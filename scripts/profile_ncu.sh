@@ -2,8 +2,9 @@
 set -euo pipefail
 
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.9}"
-export PATH="${CUDA_HOME}/bin:${PATH}"
-PYTHON_BIN="${PYTHON_BIN:-/mnt/Data/yangpd/envs/airworld-latent/bin/python}"
+CSAHCA_VENV="${CSAHCA_VENV:-/mnt/Data/yangpd/envs/csahca}"
+export PATH="${CSAHCA_VENV}/bin:${CUDA_HOME}/bin:${PATH}"
+PYTHON_BIN="${PYTHON_BIN:-${CSAHCA_VENV}/bin/python}"
 
 mkdir -p profiling/ncu
 

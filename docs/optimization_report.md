@@ -7,16 +7,16 @@ This file is intentionally a living report. Fill it in after each profiling run.
 - GPU: NVIDIA H100 PCIe, 81559 MiB each, 5 visible devices on `h100`
 - Driver: 580.82.09
 - CUDA toolkit: `/usr/local/cuda-12.9`
-- PyTorch env: `/mnt/Data/yangpd/envs/airworld-latent/bin/python`
+- PyTorch env: `/mnt/Data/yangpd/envs/csahca/bin/python`
 - PyTorch: 2.11.0+cu128
-- Commit: not committed yet
+- Commit: record the exact `git rev-parse --short HEAD` value for each formal run
 
 ## Baseline Results
 
 | Version | Change | Latency ms | Effective GB/s | Speedup | Notes |
 | --- | --- | ---: | ---: | ---: | --- |
-| v0 | PyTorch CSA reference | 0.1946 | 10.78 | 1.00x | B=1, H=8, S=4096, D=128, chunk=64, top_k=8, BF16 |
-| v1 | Naive CUDA CSA | 1.2563 | 1.67 | 0.15x | Correctness-first kernel; expected to be slower before optimization |
+| v0 | PyTorch CSA reference | 0.1646 | 12.74 | 1.00x | B=1, H=8, S=4096, D=128, chunk=64, top_k=8, BF16 |
+| v1 | Naive CUDA CSA | 1.2223 | 1.72 | 0.13x | Correctness-first kernel; expected to be slower before optimization |
 
 ## Nsight Systems Findings
 

@@ -53,8 +53,9 @@ Use an existing CUDA-enabled PyTorch environment, then install the extension:
 
 ```bash
 export CUDA_HOME=/usr/local/cuda-12.9
-export PATH="${CUDA_HOME}/bin:${PATH}"
-PY=/mnt/Data/yangpd/envs/airworld-latent/bin/python
+export CSAHCA_VENV=/mnt/Data/yangpd/envs/csahca
+export PATH="${CSAHCA_VENV}/bin:${CUDA_HOME}/bin:${PATH}"
+PY=${CSAHCA_VENV}/bin/python
 
 ${PY} setup.py build_ext --inplace
 ${PY} -m hybrid_attention.correctness --device cuda --require-extension
@@ -66,6 +67,12 @@ Run the default sweep:
 
 ```bash
 bash scripts/run_bench.sh
+```
+
+Create or refresh the dedicated H100 uv environment:
+
+```bash
+bash scripts/setup_h100_uv_env.sh
 ```
 
 Profile with Nsight:
