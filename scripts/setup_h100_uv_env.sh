@@ -38,4 +38,16 @@ export CUDA_HOME
   --head-dim 128 \
   --chunk-size 64 \
   --top-k 4 \
+  --kernel v1 \
+  --require-extension
+
+"${CSAHCA_VENV}/bin/python" -m hybrid_attention.correctness \
+  --device cuda \
+  --dtype bfloat16 \
+  --seq-len 1024 \
+  --heads 2 \
+  --head-dim 128 \
+  --chunk-size 64 \
+  --top-k 4 \
+  --kernel tiled \
   --require-extension

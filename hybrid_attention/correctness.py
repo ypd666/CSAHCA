@@ -4,7 +4,7 @@ import argparse
 
 import torch
 
-from .extension import csa_decode_forward
+from .extension import csa_decode_forward, csa_decode_forward_tiled
 from .reference import csa_reference, make_synthetic_case, select_topk_chunks
 
 
@@ -18,6 +18,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--chunk-size", type=int, default=64)
     parser.add_argument("--top-k", type=int, default=4)
+    parser.add_argument("--tile-size", type=int, default=8)
+    parser.add_argument("--kernel", choices=["v1", "tiled"], default="v1")
     parser.add_argument("--atol", type=float, default=3e-2)
     parser.add_argument("--rtol", type=float, default=3e-2)
     parser.add_argument("--require-extension", action="store_true")
@@ -51,7 +53,17 @@ def main() -> None:
     )
 
     try:
-        got = csa_decode_forward(case.q, case.k_cache, case.v_cache, selected, case.chunk_size)
+        if args.kernel == "v1":
+            got = csa_decode_forward(case.q, case.k_cache, case.v_cache, selected, case.chunk_size)
+        else:
+            got = csa_decode_forward_tiled(
+                case.q,
+                case.k_cache,
+                case.v_cache,
+                selected,
+                case.chunk_size,
+                args.tile_size,
+            )
     except Exception as exc:
         if args.require_extension:
             raise
@@ -72,4 +84,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

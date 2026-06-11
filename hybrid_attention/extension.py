@@ -57,3 +57,21 @@ def csa_decode_forward(
         int(chunk_size),
     )
 
+
+def csa_decode_forward_tiled(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    selected_chunks: torch.Tensor,
+    chunk_size: int,
+    tile_size: int = 8,
+) -> torch.Tensor:
+    module = load_cuda_extension()
+    return module.csa_decode_forward_tiled(
+        q.contiguous(),
+        k_cache.contiguous(),
+        v_cache.contiguous(),
+        selected_chunks.contiguous(),
+        int(chunk_size),
+        int(tile_size),
+    )

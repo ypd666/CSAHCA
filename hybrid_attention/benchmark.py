@@ -8,7 +8,7 @@ from typing import Callable
 
 import torch
 
-from .extension import csa_decode_forward
+from .extension import csa_decode_forward, csa_decode_forward_tiled
 from .reference import (
     csa_reference,
     full_decode_attention,
@@ -21,7 +21,11 @@ from .reference import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark CSA/HCA decode attention variants.")
-    parser.add_argument("--mode", choices=["torch-full", "torch-csa", "torch-hca", "torch-hybrid", "cuda-csa"], default="torch-csa")
+    parser.add_argument(
+        "--mode",
+        choices=["torch-full", "torch-csa", "torch-hca", "torch-hybrid", "cuda-csa", "cuda-csa-tiled"],
+        default="torch-csa",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=["float16", "bfloat16", "float32"], default="bfloat16")
     parser.add_argument("--batch", type=int, default=1)
@@ -29,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seq-len", type=int, default=16384)
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--chunk-size", type=int, default=64)
+    parser.add_argument("--tile-size", type=int, default=8)
     parser.add_argument("--hca-chunk-size", type=int, default=256)
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=10)
@@ -118,8 +123,18 @@ def main() -> None:
                 hca_chunk_size=args.hca_chunk_size,
             )
             selected_tokens = args.top_k * args.chunk_size + args.seq_len // args.hca_chunk_size
-        else:
+        elif args.mode == "cuda-csa":
             fn = lambda: csa_decode_forward(case.q, case.k_cache, case.v_cache, selected, case.chunk_size)
+            selected_tokens = args.top_k * args.chunk_size
+        else:
+            fn = lambda: csa_decode_forward_tiled(
+                case.q,
+                case.k_cache,
+                case.v_cache,
+                selected,
+                case.chunk_size,
+                args.tile_size,
+            )
             selected_tokens = args.top_k * args.chunk_size
 
         for _ in range(args.warmup):
@@ -147,6 +162,7 @@ def main() -> None:
         "seq_len": args.seq_len,
         "head_dim": args.head_dim,
         "chunk_size": args.chunk_size,
+        "tile_size": args.tile_size,
         "top_k": args.top_k,
         "latency_ms": f"{latency_ms:.4f}",
         "effective_gbps": f"{effective_gbps:.2f}",
@@ -158,4 +174,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

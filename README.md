@@ -61,6 +61,7 @@ ${PY} setup.py build_ext --inplace
 ${PY} -m hybrid_attention.correctness --device cuda --require-extension
 ${PY} -m hybrid_attention.benchmark --mode torch-csa --device cuda --seq-len 16384
 ${PY} -m hybrid_attention.benchmark --mode cuda-csa --device cuda --seq-len 16384
+${PY} -m hybrid_attention.benchmark --mode cuda-csa-tiled --device cuda --seq-len 16384
 ```
 
 Run the default sweep:
@@ -79,7 +80,9 @@ Profile with Nsight:
 
 ```bash
 bash scripts/profile_nsys.sh
+bash scripts/profile_nsys_tiled.sh
 bash scripts/profile_ncu.sh
+bash scripts/profile_ncu_tiled.sh
 ```
 
 ## Portfolio Story
