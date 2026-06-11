@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "h100-hybrid-compressed-attention"
+version = "0.1.0"
+description = "DeepSeek-V4-inspired CSA/HCA attention kernel profiling on H100"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.3",
+]
+
+[tool.setuptools]
+packages = ["hybrid_attention"]
+

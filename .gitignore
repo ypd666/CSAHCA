@@ -1,0 +1,24 @@
+.DS_Store
+._*
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.so
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Generated benchmark and profiler artifacts.
+results/*.csv
+results/*.json
+profiling/
+*.nsys-rep
+*.sqlite
+*.ncu-rep
+
+# Local editor state.
+.idea/
+.vscode/

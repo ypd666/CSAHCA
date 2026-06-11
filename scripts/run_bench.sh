@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.9}"
+export PATH="${CUDA_HOME}/bin:${PATH}"
+PYTHON_BIN="${PYTHON_BIN:-/mnt/Data/yangpd/envs/airworld-latent/bin/python}"
+
+mkdir -p results
+
+for mode in torch-csa cuda-csa; do
+  for seq_len in 4096 8192 16384 32768; do
+    "${PYTHON_BIN}" -m hybrid_attention.benchmark \
+      --mode "${mode}" \
+      --device cuda \
+      --dtype bfloat16 \
+      --batch 1 \
+      --heads 8 \
+      --seq-len "${seq_len}" \
+      --head-dim 128 \
+      --chunk-size 64 \
+      --top-k 8 \
+      --warmup 10 \
+      --iters 50 \
+      --out results/results.csv
+  done
+done
