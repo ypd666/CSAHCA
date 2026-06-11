@@ -20,11 +20,24 @@ This file is intentionally a living report. Fill it in after each profiling run.
 
 ## Nsight Systems Findings
 
-- TBD
+- The timed NVTX range `cuda-csa` is 48.027 ms for 100 iterations, matching
+  the benchmark latency of roughly 0.480 ms per iteration.
+- Within the `cuda-csa` range, 99.2% of GPU kernel time is spent in
+  `csa_decode_forward_kernel`.
+- Kernel launches are dense inside the timed region, so the immediate bottleneck
+  is the custom CUDA kernel rather than CPU launch gaps or PyTorch overhead.
 
 ## Nsight Compute Findings
 
-- TBD
+- `csa_decode_forward_kernel` launches with grid size `(8, 1, 1)` for the
+  default `B=1, H=8` case, while the H100 has 114 SMs. Nsight Compute flags this
+  as a small-grid launch.
+- Compute throughput and memory throughput are both below 1%, which means the
+  kernel is not saturating either math or HBM bandwidth. It is primarily limited
+  by insufficient parallelism.
+- Achieved occupancy is reported around 12.5%.
+- Barrier stalls are visible, matching the v1 implementation's repeated
+  block-wide `__syncthreads()` reductions.
 
 ## Optimization Log
 
@@ -39,9 +52,12 @@ This file is intentionally a living report. Fill it in after each profiling run.
 
 ### v2: Planned
 
-- Use warp-level reductions instead of block-wide shared-memory reductions.
-- Improve memory access and reduce synchronization.
-- Compare stall reasons and achieved bandwidth.
+- Split one `(batch, head)` workload across selected KV tiles so the grid size
+  becomes `B * H * selected_tiles` instead of only `B * H`.
+- Use a two-stage online-softmax design: tile kernel writes partial max/sum/value
+  statistics, then a merge kernel combines tile partials into the final output.
+- Compare grid size, achieved occupancy, kernel duration, and end-to-end latency
+  against v1.
 
 ## Lessons
 
