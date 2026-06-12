@@ -1,79 +1,85 @@
-# H100 Hybrid Compressed Attention Profiling
+# CSAHCA
 
-This repository is a portfolio-style CUDA and profiling project inspired by
-DeepSeek-V4-style CSA/HCA long-context decode attention. The first target is
-not to reproduce a production model end to end. The target is to build a small,
-measurable workload that shows how to:
+CSAHCA is a compact H100 CUDA profiling project for compressed sparse
+attention. It starts with PyTorch reference implementations, moves into custom
+CUDA decode kernels, and includes an experimental SGLang DeepSeek-V4/FlashMLA
+ABI bridge for live tensor comparison.
 
-- implement PyTorch reference attention paths;
-- write a naive CUDA CSA decode kernel;
-- profile with `torch.profiler`, Nsight Systems, and Nsight Compute;
-- use the profiler output to drive concrete kernel optimizations on H100.
+The repository is meant to show the full performance workflow: build a
+reproducible workload, profile it with Nsight Systems and Nsight Compute, make a
+targeted kernel change, then validate both correctness and serving-level impact.
 
-## Project Scope
+## Highlights
 
-Initial fixed assumptions:
+- PyTorch references for full attention, CSA, HCA, and a mini hybrid decode
+  block.
+- CUDA CSA decode kernels:
+  - `cuda-csa`: correctness-first one-CTA-per-query/head kernel.
+  - `cuda-csa-tiled`: tiled CTA parallelism that addresses H100 small-grid
+    underutilization.
+- Nsight Systems and Nsight Compute scripts for timeline and kernel analysis.
+- Model-level A/B harness that inserts the custom kernel inside a small decode
+  block instead of timing only a naked kernel.
+- Experimental DSV4 ABI prototype for SGLang DeepSeek-V4 attention:
+  - `compress_ratio=0`: SWA paged FP8 cache.
+  - `compress_ratio=4`: SWA plus C4 compressed cache pages.
+  - `compress_ratio=128`: SWA plus C128 compressed cache pages.
 
-- GPU: 1x H100.
-- Workload: decode-time single-token attention.
-- Shapes: `q [batch, heads, head_dim]`, KV cache `[batch, heads, seq, head_dim]`.
-- Default `head_dim`: 128.
-- CSA: chunk KV cache, select top-k chunks, attend selected tokens.
-- HCA: attend dense compressed chunk summaries.
-- CUDA v1: a correctness-first CSA kernel.
+## Status
 
-Later phases can add FP8 KV cache, vectorized loads, shared-memory tiling,
-warp-level reductions, CUDA Graphs, and optional multi-GPU KV sharding.
+This is a research and portfolio prototype, not a production FlashMLA
+replacement.
+
+- The CSA tiled kernel has documented H100 speedups in the synthetic and
+  mini-block setting. See [docs/model_kernel_benchmark.md](docs/model_kernel_benchmark.md).
+- The DSV4 path is correctness-first. It has passed synthetic checks and live
+  tensor comparison against SGLang FlashMLA on H100, including C4 and C128
+  paths, but it is not optimized enough to claim end-to-end serving speedup.
+- The SGLang integration is behind environment flags and is designed for A/B
+  testing, live comparison, and smoke replacement. Production use would require
+  a deeper C++/CUDA integration and decode CUDA graph compatibility.
+
+No model weights, datasets, profiler reports, or generated benchmark artifacts
+are included in the repository.
 
 ## Repository Layout
 
 ```text
-csrc/
-  bindings.cpp
-  csa_attention.cu
-docs/
-  project_plan.md
-  optimization_report.md
-hybrid_attention/
-  benchmark.py
-  correctness.py
-  extension.py
-  reference.py
-scripts/
-  run_bench.sh
-  profile_nsys.sh
-  profile_ncu.sh
-results/
-  README.md
+csrc/                         CUDA kernels and pybind bindings
+hybrid_attention/             PyTorch references, benchmarks, extension wrappers
+integrations/sglang_dsv4/     Env-gated SGLang DeepSeek-V4 hook prototype
+scripts/                      H100 setup, benchmark, and profiling helpers
+docs/                         Project plan, profiling notes, benchmark reports
+results/                      Placeholder for generated local CSV/JSON outputs
 ```
 
-## Quickstart on H100
+## Quickstart On H100
 
-Use an existing CUDA-enabled PyTorch environment, then install the extension:
+Create the uv environment and build the extension:
 
 ```bash
 export CUDA_HOME=/usr/local/cuda-12.9
-export CSAHCA_VENV=/mnt/Data/yangpd/envs/csahca
-export PATH="${CSAHCA_VENV}/bin:${CUDA_HOME}/bin:${PATH}"
-PY=${CSAHCA_VENV}/bin/python
-
-${PY} setup.py build_ext --inplace
-${PY} -m hybrid_attention.correctness --device cuda --require-extension
-${PY} -m hybrid_attention.benchmark --mode torch-csa --device cuda --seq-len 16384
-${PY} -m hybrid_attention.benchmark --mode cuda-csa --device cuda --seq-len 16384
-${PY} -m hybrid_attention.benchmark --mode cuda-csa-tiled --device cuda --seq-len 16384
+export CSAHCA_VENV="${HOME}/envs/csahca"
+bash scripts/setup_h100_uv_env.sh
 ```
 
-Run the default sweep:
+Or build inside an existing CUDA-enabled PyTorch environment:
+
+```bash
+python setup.py build_ext --inplace
+python -m hybrid_attention.correctness --device cuda --require-extension
+```
+
+Run the synthetic CSA benchmark sweep:
 
 ```bash
 bash scripts/run_bench.sh
 ```
 
-Create or refresh the dedicated H100 uv environment:
+Run the mini decode-block A/B benchmark:
 
 ```bash
-bash scripts/setup_h100_uv_env.sh
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_model_kernel_ab.sh
 ```
 
 Profile with Nsight:
@@ -85,18 +91,64 @@ bash scripts/profile_ncu.sh
 bash scripts/profile_ncu_tiled.sh
 ```
 
-## Portfolio Story
+## DSV4 Prototype Checks
 
-The intended write-up is:
+Build the CUDA extension first, then run synthetic checks for the three DSV4
+cache modes:
 
-1. Establish PyTorch full attention, CSA, and HCA references.
-2. Measure baseline latency, effective memory bandwidth, and scaling by
-   sequence length, chunk size, top-k chunks, and dtype.
-3. Implement CUDA CSA v1 and verify numerical agreement with the PyTorch
-   reference.
-4. Use Nsight Systems to inspect launch gaps and CPU/GPU overlap.
-5. Use Nsight Compute to inspect DRAM throughput, L2 hit rate, occupancy,
-   warp stalls, and memory-bound vs compute-bound behavior.
-6. Apply kernel optimizations and report before/after speedups.
+```bash
+python -m hybrid_attention.dsv4_correctness --device cuda --compress-ratio 0
+python -m hybrid_attention.dsv4_correctness --device cuda --compress-ratio 4
+python -m hybrid_attention.dsv4_correctness --device cuda --compress-ratio 128
+```
 
-See [docs/project_plan.md](docs/project_plan.md) for the staged plan.
+Microbenchmark one DSV4 mode:
+
+```bash
+python -m hybrid_attention.dsv4_benchmark \
+  --device cuda \
+  --compress-ratio 128 \
+  --num-queries 1 \
+  --heads 8 \
+  --top-k 64 \
+  --extra-top-k 64
+```
+
+The current DSV4 implementation details and caveats are in
+[docs/dsv4_abi_status.md](docs/dsv4_abi_status.md).
+
+## SGLang Integration
+
+The SGLang hook lives in [integrations/sglang_dsv4](integrations/sglang_dsv4).
+It is disabled by default and is controlled by environment variables:
+
+```bash
+export CSAHCA_SGLANG_DSV4_PATCH=1
+export CSAHCA_DSV4_MODE=trace       # trace, csahca, or require-kernel
+export CSAHCA_DSV4_LIVE_COMPARE=1   # compare CSAHCA output with FlashMLA
+```
+
+For replacement smoke tests, use:
+
+```bash
+export CSAHCA_DSV4_MODE=csahca
+export CSAHCA_DSV4_REPLACE_OUTPUT=1
+export CSAHCA_DSV4_REPLACE_FORWARD_MODES=DECODE
+```
+
+Read [integrations/sglang_dsv4/README.md](integrations/sglang_dsv4/README.md)
+before restarting a live service.
+
+## Performance Story
+
+The main optimization lesson is deliberately simple: the first CUDA CSA kernel
+launched only `batch * heads` CTAs, so an H100 with 114 SMs was mostly idle.
+The tiled kernel splits selected KV tokens across many CTAs and merges online
+softmax partials, turning a small-grid kernel into a much more parallel decode
+workload.
+
+That optimization is useful when the selected sparse attention work dominates
+or when chunk selection is already available. When dynamic selection is still
+performed in Python/PyTorch every step, selector overhead can erase most of the
+kernel win. The next real serving target is therefore the indexer/scheduler
+path, not only the attention math kernel.

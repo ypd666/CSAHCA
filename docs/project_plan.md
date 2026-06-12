@@ -101,6 +101,12 @@ hybrid_decode_attention(q, k_cache, v_cache, chunk_indices, metadata)
 
 Deliverable: a small model/block forward pass calling the extension.
 
+Current mini-block entry point:
+
+```bash
+python3 -m hybrid_attention.model_inference --backend cuda-csa-tiled --selection precomputed
+```
+
 ## Initial Commands
 
 ```bash
@@ -110,4 +116,3 @@ python3 -m hybrid_attention.benchmark --mode cuda-csa --device cuda --seq-len 16
 bash scripts/profile_nsys.sh
 bash scripts/profile_ncu.sh
 ```
-

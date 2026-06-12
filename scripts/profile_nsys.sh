@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.9}"
-CSAHCA_VENV="${CSAHCA_VENV:-/mnt/Data/yangpd/envs/csahca}"
+CSAHCA_VENV="${CSAHCA_VENV:-${HOME}/envs/csahca}"
 export PATH="${CSAHCA_VENV}/bin:${CUDA_HOME}/bin:${PATH}"
 PYTHON_BIN="${PYTHON_BIN:-${CSAHCA_VENV}/bin/python}"
 

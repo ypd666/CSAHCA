@@ -33,7 +33,11 @@ def load_cuda_extension() -> ModuleType:
     root = Path(__file__).resolve().parents[1]
     _CUDA_MODULE = load(
         name="hybrid_attention_cuda",
-        sources=[str(root / "csrc" / "bindings.cpp"), str(root / "csrc" / "csa_attention.cu")],
+        sources=[
+            str(root / "csrc" / "bindings.cpp"),
+            str(root / "csrc" / "csa_attention.cu"),
+            str(root / "csrc" / "dsv4_attention.cu"),
+        ],
         extra_cuda_cflags=["-O3", "--use_fast_math", "-lineinfo"],
         extra_cflags=["-O3"],
         verbose=True,
@@ -74,4 +78,76 @@ def csa_decode_forward_tiled(
         selected_chunks.contiguous(),
         int(chunk_size),
         int(tile_size),
+    )
+
+
+def dsv4_swa_decode_forward(
+    q: torch.Tensor,
+    paged_k_cache: torch.Tensor,
+    token_indices: torch.Tensor,
+    topk_lengths: torch.Tensor | None,
+    attn_sink: torch.Tensor | None,
+    page_size: int,
+    softmax_scale: float,
+) -> torch.Tensor:
+    """Prototype DSV4 SWA decode over SGLang-style paged FP8 cache.
+
+    This covers the first DSV4 ABI slice, equivalent to the ``compress_ratio=0``
+    cache path. ``paged_k_cache`` may be a uint8 byte tensor or a float8 view of
+    the same bytes; the CUDA entry point consumes the byte view.
+    """
+
+    module = load_cuda_extension()
+    cache_u8 = paged_k_cache.contiguous().view(torch.uint8)
+    if topk_lengths is None:
+        topk_lengths = torch.empty(0, dtype=torch.int32, device=q.device)
+    if attn_sink is None:
+        attn_sink = torch.empty(0, dtype=torch.float32, device=q.device)
+    return module.dsv4_swa_decode_forward(
+        q.contiguous(),
+        cache_u8,
+        token_indices.contiguous().to(torch.int32),
+        topk_lengths.contiguous().to(torch.int32),
+        attn_sink.contiguous().to(torch.float32),
+        int(page_size),
+        float(softmax_scale),
+    )
+
+
+def dsv4_sparse_decode_forward(
+    q: torch.Tensor,
+    paged_k_cache: torch.Tensor,
+    token_indices: torch.Tensor,
+    topk_lengths: torch.Tensor | None,
+    extra_paged_k_cache: torch.Tensor,
+    extra_token_indices: torch.Tensor,
+    extra_topk_lengths: torch.Tensor | None,
+    attn_sink: torch.Tensor | None,
+    page_size: int,
+    extra_page_size: int,
+    softmax_scale: float,
+) -> torch.Tensor:
+    """DSV4 decode over SWA cache plus C4/C128 compressed cache pages."""
+
+    module = load_cuda_extension()
+    cache_u8 = paged_k_cache.contiguous().view(torch.uint8)
+    extra_cache_u8 = extra_paged_k_cache.contiguous().view(torch.uint8)
+    if topk_lengths is None:
+        topk_lengths = torch.empty(0, dtype=torch.int32, device=q.device)
+    if extra_topk_lengths is None:
+        extra_topk_lengths = torch.empty(0, dtype=torch.int32, device=q.device)
+    if attn_sink is None:
+        attn_sink = torch.empty(0, dtype=torch.float32, device=q.device)
+    return module.dsv4_sparse_decode_forward(
+        q.contiguous(),
+        cache_u8,
+        token_indices.contiguous().to(torch.int32),
+        topk_lengths.contiguous().to(torch.int32),
+        extra_cache_u8,
+        extra_token_indices.contiguous().to(torch.int32),
+        extra_topk_lengths.contiguous().to(torch.int32),
+        attn_sink.contiguous().to(torch.float32),
+        int(page_size),
+        int(extra_page_size),
+        float(softmax_scale),
     )

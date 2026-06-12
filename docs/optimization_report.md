@@ -7,7 +7,8 @@ This file is intentionally a living report. Fill it in after each profiling run.
 - GPU: NVIDIA H100 PCIe, 81559 MiB each, 5 visible devices on `h100`
 - Driver: 580.82.09
 - CUDA toolkit: `/usr/local/cuda-12.9`
-- PyTorch env: `/mnt/Data/yangpd/envs/csahca/bin/python`
+- PyTorch env: `${HOME}/envs/csahca/bin/python` or equivalent CUDA-enabled
+  environment
 - PyTorch: 2.11.0+cu128
 - Commit: record the exact `git rev-parse --short HEAD` value for each formal run
 

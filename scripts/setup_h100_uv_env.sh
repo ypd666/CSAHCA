@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UV_BIN="${UV_BIN:-/mnt/Data/yangpd/.local/bin/uv}"
-CSAHCA_VENV="${CSAHCA_VENV:-/mnt/Data/yangpd/envs/csahca}"
-PYTHON_BIN="${PYTHON_BIN:-/mnt/Data/yangpd/.local/share/uv/python/cpython-3.11-linux-x86_64-gnu/bin/python3.11}"
+UV_BIN="${UV_BIN:-${HOME}/.local/bin/uv}"
+CSAHCA_VENV="${CSAHCA_VENV:-${HOME}/envs/csahca}"
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.9}"
 
 if [[ "${CSAHCA_RECREATE:-0}" == "1" ]]; then

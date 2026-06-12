@@ -14,10 +14,16 @@ venv/
 # Generated benchmark and profiler artifacts.
 results/*.csv
 results/*.json
+results/*.jsonl
 profiling/
 *.nsys-rep
 *.sqlite
 *.ncu-rep
+logs/
+data/
+*.pt
+*.pth
+*.safetensors
 
 # Local editor state.
 .idea/

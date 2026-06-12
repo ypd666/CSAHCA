@@ -9,7 +9,7 @@ setup(
     ext_modules=[
         CUDAExtension(
             name="hybrid_attention_cuda",
-            sources=["csrc/bindings.cpp", "csrc/csa_attention.cu"],
+            sources=["csrc/bindings.cpp", "csrc/csa_attention.cu", "csrc/dsv4_attention.cu"],
             extra_compile_args={
                 "cxx": ["-O3"],
                 "nvcc": ["-O3", "--use_fast_math", "-lineinfo"],
@@ -18,4 +18,3 @@ setup(
     ],
     cmdclass={"build_ext": BuildExtension},
 )
-
