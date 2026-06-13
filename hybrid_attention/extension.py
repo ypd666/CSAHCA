@@ -81,6 +81,20 @@ def csa_decode_forward_tiled(
     )
 
 
+def _dsv4_tiled_enabled(module: ModuleType) -> bool:
+    if os.environ.get("CSAHCA_DSV4_TILED", "1").strip().lower() in {"", "0", "false", "no", "off"}:
+        return False
+    # Older installed .so builds may predate the tiled entry point.
+    return hasattr(module, "dsv4_decode_forward_tiled")
+
+
+def _dsv4_tile_size() -> int:
+    try:
+        return int(os.environ.get("CSAHCA_DSV4_TILE_SIZE", "0"))
+    except ValueError:
+        return 0
+
+
 def dsv4_swa_decode_forward(
     q: torch.Tensor,
     paged_k_cache: torch.Tensor,
@@ -103,6 +117,21 @@ def dsv4_swa_decode_forward(
         topk_lengths = torch.empty(0, dtype=torch.int32, device=q.device)
     if attn_sink is None:
         attn_sink = torch.empty(0, dtype=torch.float32, device=q.device)
+    if _dsv4_tiled_enabled(module):
+        return module.dsv4_decode_forward_tiled(
+            q.contiguous(),
+            cache_u8,
+            token_indices.contiguous().to(torch.int32),
+            topk_lengths.contiguous().to(torch.int32),
+            torch.empty((0, 0), dtype=torch.uint8, device=q.device),
+            torch.empty((0, 0), dtype=torch.int32, device=q.device),
+            torch.empty(0, dtype=torch.int32, device=q.device),
+            attn_sink.contiguous().to(torch.float32),
+            int(page_size),
+            1,
+            _dsv4_tile_size(),
+            float(softmax_scale),
+        )
     return module.dsv4_swa_decode_forward(
         q.contiguous(),
         cache_u8,
@@ -138,6 +167,21 @@ def dsv4_sparse_decode_forward(
         extra_topk_lengths = torch.empty(0, dtype=torch.int32, device=q.device)
     if attn_sink is None:
         attn_sink = torch.empty(0, dtype=torch.float32, device=q.device)
+    if _dsv4_tiled_enabled(module):
+        return module.dsv4_decode_forward_tiled(
+            q.contiguous(),
+            cache_u8,
+            token_indices.contiguous().to(torch.int32),
+            topk_lengths.contiguous().to(torch.int32),
+            extra_cache_u8,
+            extra_token_indices.contiguous().to(torch.int32),
+            extra_topk_lengths.contiguous().to(torch.int32),
+            attn_sink.contiguous().to(torch.float32),
+            int(page_size),
+            int(extra_page_size),
+            _dsv4_tile_size(),
+            float(softmax_scale),
+        )
     return module.dsv4_sparse_decode_forward(
         q.contiguous(),
         cache_u8,

@@ -2,7 +2,7 @@
 
 Date: 2026-06-12
 
-Host: one H100 machine
+Host: H100 machine via `ssh h100`
 
 GPU scope: one GPU, `CUDA_VISIBLE_DEVICES=0`
 
@@ -21,7 +21,7 @@ explicit selected chunk ids.
 ## Command
 
 ```bash
-cd /path/to/CSAHCA
+cd /mnt/Data/yangpd/CSAHCA
 CUDA_VISIBLE_DEVICES=0 \
 SEQ_LEN=32768 \
 STEPS=200 \
@@ -47,10 +47,10 @@ chunk_size=64, top_k=8, dtype=bfloat16
 
 ### Decode Block, MLP Ratio 2.0
 
-Generated CSV:
+Remote CSV:
 
 ```text
-results/model_kernel_ab_h100_gpu0_20260612_135911.csv
+/mnt/Data/yangpd/CSAHCA/results/model_kernel_ab_h100_gpu0_20260612_135911.csv
 ```
 
 | Backend | Custom kernel | Latency / token | Tokens/s | Speedup vs cuda-csa-tiled |
@@ -61,10 +61,10 @@ results/model_kernel_ab_h100_gpu0_20260612_135911.csv
 
 ### Attention-Dominated, MLP Ratio 0.0
 
-Generated CSV:
+Remote CSV:
 
 ```text
-results/model_kernel_ab_h100_gpu0_attention_only_20260612_135929.csv
+/mnt/Data/yangpd/CSAHCA/results/model_kernel_ab_h100_gpu0_attention_only_20260612_135929.csv
 ```
 
 | Backend | Custom kernel | Latency / token | Tokens/s | Speedup vs cuda-csa-tiled |
@@ -75,10 +75,10 @@ results/model_kernel_ab_h100_gpu0_attention_only_20260612_135929.csv
 
 ### Dynamic Chunk Selection, MLP Ratio 0.0
 
-Generated CSV:
+Remote CSV:
 
 ```text
-results/model_kernel_ab_h100_gpu0_dynamic_20260612_135948.csv
+/mnt/Data/yangpd/CSAHCA/results/model_kernel_ab_h100_gpu0_dynamic_20260612_135948.csv
 ```
 
 | Backend | Custom kernel | Latency / token | Tokens/s | Speedup vs cuda-csa-tiled |
