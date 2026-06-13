@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from collections import Counter
+from pathlib import Path
 from typing import Any, Callable
 
 import torch
@@ -18,7 +19,9 @@ _CALL_COUNTS: Counter[tuple[str, int, str, tuple[int, ...]]] = Counter()
 _ABI_COUNTS: Counter[tuple[int, str, tuple[int, ...]]] = Counter()
 _COMPARE_COUNTS: Counter[tuple[int, str, tuple[int, ...]]] = Counter()
 _DELEGATE_COUNTS: Counter[tuple[int, int, str, tuple[int, ...], str]] = Counter()
+_CAPTURE_COUNTS: Counter[tuple[int, int, str, tuple[int, ...]]] = Counter()
 _COMPARE_TOTAL = 0
+_CAPTURE_TOTAL = 0
 _LAST_SUMMARY_TS = 0.0
 
 
@@ -43,6 +46,13 @@ def _mode() -> str:
 def _int_env(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
     except ValueError:
         return default
 
@@ -76,6 +86,110 @@ def _forward_mode_allowed(forward_batch: Any, env_name: str, default: str) -> bo
 
 def _tensor_all_finite(x: torch.Tensor) -> bool:
     return bool(torch.isfinite(x).all().item())
+
+
+def _tensor_absmax(x: torch.Tensor) -> float:
+    if x.numel() == 0:
+        return 0.0
+    y = torch.nan_to_num(
+        x.detach().float(),
+        nan=0.0,
+        posinf=float("inf"),
+        neginf=float("-inf"),
+    )
+    return float(y.abs().max().item())
+
+
+def _q_guard(
+    q: torch.Tensor,
+    *,
+    require_finite_env: str,
+    require_finite_default: str,
+    max_abs_env: str,
+    max_abs_default: float,
+) -> tuple[bool, str]:
+    if _enabled(require_finite_env, require_finite_default) and not _tensor_all_finite(q):
+        return False, "non-finite q"
+
+    max_abs_limit = _float_env(max_abs_env, max_abs_default)
+    if max_abs_limit > 0.0:
+        q_absmax = _tensor_absmax(q)
+        if q_absmax > max_abs_limit:
+            return False, f"q absmax {q_absmax:.6g} exceeds {max_abs_limit:.6g}"
+
+    return True, ""
+
+
+def _int_filter_allows(value: int, filter_text: str, default: str) -> bool:
+    text = (filter_text or default).strip()
+    if not text or text.lower() in {"*", "all"}:
+        return True
+    try:
+        return int(value) in {int(item) for item in text.split(",") if item.strip()}
+    except ValueError:
+        try:
+            return int(value) == int(default)
+        except ValueError:
+            return False
+
+
+def _mode_filter_allows(forward_batch: Any, filter_text: str, default: str) -> bool:
+    text = (filter_text or default).strip()
+    if not text or text.lower() in {"*", "all"}:
+        return True
+    allowed = {item.strip().upper() for item in text.split(",") if item.strip()}
+    return _forward_mode_name(forward_batch).upper() in allowed
+
+
+def _dist_rank() -> str:
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            return str(torch.distributed.get_rank())
+    except Exception:
+        pass
+    return os.getenv("RANK", "na")
+
+
+def _capture_tensor(x: torch.Tensor | None) -> torch.Tensor | None:
+    if x is None:
+        return None
+    y = x.detach().contiguous()
+    if str(y.dtype).startswith("torch.float8"):
+        y = y.view(torch.uint8)
+    return y.cpu()
+
+
+def _capture_budget_available(
+    *,
+    layer_id: int,
+    compress_ratio: int,
+    forward_batch: Any,
+    q: torch.Tensor,
+) -> bool:
+    global _CAPTURE_TOTAL
+
+    if not os.getenv("CSAHCA_DSV4_CAPTURE_DIR", "").strip():
+        return False
+    max_total = _int_env("CSAHCA_DSV4_CAPTURE_MAX_CALLS", 0)
+    if max_total <= 0 or _CAPTURE_TOTAL >= max_total:
+        return False
+    if not _int_filter_allows(layer_id, os.getenv("CSAHCA_DSV4_CAPTURE_LAYER_IDS", "0"), "0"):
+        return False
+    if not _int_filter_allows(compress_ratio, os.getenv("CSAHCA_DSV4_CAPTURE_RATIOS", "all"), "all"):
+        return False
+    mode_default = os.getenv("CSAHCA_DSV4_COMPARE_FORWARD_MODES", "DECODE")
+    if not _mode_filter_allows(forward_batch, os.getenv("CSAHCA_DSV4_CAPTURE_FORWARD_MODES", mode_default), mode_default):
+        return False
+    max_q = _int_env("CSAHCA_DSV4_CAPTURE_MAX_Q", _int_env("CSAHCA_DSV4_COMPARE_MAX_Q", 64))
+    if max_q > 0 and q.shape[0] > max_q:
+        return False
+
+    key = (int(layer_id), int(compress_ratio), _forward_mode_name(forward_batch), _shape(q))
+    _CAPTURE_COUNTS[key] += 1
+    if _CAPTURE_COUNTS[key] > _int_env("CSAHCA_DSV4_CAPTURE_FIRST_N", 1):
+        return False
+    _CAPTURE_TOTAL += 1
+    return True
 
 
 def _record_call(
@@ -405,9 +519,20 @@ def _log_compare_input_stats(
         valid = idx_i64 >= 0
         out_of_range = valid & (idx_i64 >= cache_slots)
         q_nonfinite = ~torch.isfinite(q3)
+        q_abs = torch.nan_to_num(
+            q3.detach().float(),
+            nan=0.0,
+            posinf=float("inf"),
+            neginf=float("-inf"),
+        ).abs()
+        q_absmax = float(q_abs.max().item()) if q_abs.numel() else 0.0
         q_bad_heads = 0
+        q_large_heads = 0
         if q3.ndim == 3:
             q_bad_heads = int(q_nonfinite.any(dim=-1).sum().item())
+            q_large_limit = _float_env("CSAHCA_DSV4_Q_SUSPICIOUS_ABS", 1.0e6)
+            if q_large_limit > 0.0:
+                q_large_heads = int((q_abs.amax(dim=-1) > q_large_limit).sum().item())
         sample_indices: list[int] = []
         sample_valid_positions: list[int] = []
         if token_indices.shape[0] > 0 and token_indices.shape[1] <= 256:
@@ -445,6 +570,7 @@ def _log_compare_input_stats(
             "forward_mode=%s q_shape=%s cache_shape=%s page_size=%s "
             "cache_slots=%s idx_min=%s idx_max=%s idx_neg=%s idx_oor=%s "
             "topk_min=%s topk_max=%s q_nan=%s q_inf=%s q_bad_heads=%s "
+            "q_absmax=%s q_large_heads=%s "
             "row0_first=%s row0_valid_pos=%s extra=%s",
             layer_id,
             compress_ratio,
@@ -462,6 +588,8 @@ def _log_compare_input_stats(
             int(torch.isnan(q3).sum().item()),
             int(torch.isinf(q3).sum().item()),
             q_bad_heads,
+            q_absmax,
+            q_large_heads,
             sample_indices,
             sample_valid_positions,
             extra_summary,
@@ -550,6 +678,89 @@ def _log_live_compare(
     )
 
 
+def _capture_live_compare(
+    *,
+    self_obj: Any,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    token_to_kv_pool: Any,
+    core: Any,
+    layer_id: int,
+    compress_ratio: int,
+    forward_batch: Any,
+    attn_sink: torch.Tensor | None,
+    reference: torch.Tensor,
+    candidate: torch.Tensor,
+) -> None:
+    capture_dir = Path(os.environ["CSAHCA_DSV4_CAPTURE_DIR"]).expanduser()
+    capture_dir.mkdir(parents=True, exist_ok=True)
+
+    q3 = q.squeeze(1) if q.ndim == 4 and q.shape[1] == 1 else q
+    token_indices, topk_lengths = _prepare_swa_indices(core=core, q=q3)
+    page_size = _swa_page_size(token_to_kv_pool, core)
+    tensors: dict[str, torch.Tensor | None] = {
+        "q": _capture_tensor(q3),
+        "reference": _capture_tensor(reference),
+        "candidate": _capture_tensor(candidate),
+        "swa_token_indices": _capture_tensor(token_indices),
+        "swa_topk_lengths": _capture_tensor(topk_lengths),
+        "attn_sink": _capture_tensor(attn_sink),
+    }
+    if _enabled("CSAHCA_DSV4_CAPTURE_CURRENT_KV"):
+        tensors["current_k"] = _capture_tensor(k)
+        tensors["current_v"] = _capture_tensor(v)
+
+    capture_caches = _enabled("CSAHCA_DSV4_CAPTURE_CACHES", "1")
+    if capture_caches:
+        tensors["swa_k_cache"] = _capture_tensor(token_to_kv_pool.get_swa_key_buffer_radix(layer_id))
+
+    extra_page_size = None
+    if compress_ratio in (4, 128):
+        extra_indices, extra_topk_lengths = _prepare_extra_indices(
+            core=core,
+            q=q3,
+            compress_ratio=compress_ratio,
+        )
+        extra_page_size = _extra_page_size(token_to_kv_pool, layer_id, compress_ratio)
+        tensors["extra_token_indices"] = _capture_tensor(extra_indices)
+        tensors["extra_topk_lengths"] = _capture_tensor(extra_topk_lengths)
+        if capture_caches:
+            tensors["extra_k_cache"] = _capture_tensor(token_to_kv_pool.get_extra_key_buffer(layer_id))
+
+    metadata = {
+        "schema": "csahca.dsv4.capture.v1",
+        "created_unix_s": time.time(),
+        "pid": os.getpid(),
+        "rank": _dist_rank(),
+        "layer_id": int(layer_id),
+        "compress_ratio": int(compress_ratio),
+        "forward_mode": _forward_mode_name(forward_batch),
+        "q_shape": _shape(q),
+        "q3_shape": _shape(q3),
+        "q_dtype": _dtype(q),
+        "page_size": int(page_size),
+        "extra_page_size": extra_page_size,
+        "softmax_scale": float(self_obj.softmax_scale),
+        "capture_caches": capture_caches,
+    }
+    filename = (
+        f"dsv4_l{int(layer_id):03d}_c{int(compress_ratio)}_"
+        f"{metadata['forward_mode'].lower()}_q{q3.shape[0]}_"
+        f"r{metadata['rank']}_p{metadata['pid']}_{int(time.time() * 1_000_000)}.pt"
+    )
+    path = capture_dir / filename
+    torch.save({"metadata": metadata, "tensors": tensors}, path)
+    LOGGER.warning(
+        "[CSAHCA][DSV4] captured live compare path=%s layer=%s compress_ratio=%s forward_mode=%s q_shape=%s",
+        path,
+        layer_id,
+        compress_ratio,
+        metadata["forward_mode"],
+        metadata["q3_shape"],
+    )
+
+
 def _maybe_forward_csahca(
     *,
     original_forward: Callable[..., torch.Tensor],
@@ -619,15 +830,21 @@ def _maybe_forward_csahca(
         "CSAHCA_DSV4_REPLACE_FORWARD_MODES",
         "DECODE",
     )
-    q_finite_for_replace = True
+    q_ok_for_replace = True
+    q_guard_reason = ""
     if decision.use_csahca and replace_output and replace_forward_mode_allowed:
-        if _enabled("CSAHCA_DSV4_REPLACE_REQUIRE_FINITE_Q", "1"):
-            q_finite_for_replace = _tensor_all_finite(q)
+        q_ok_for_replace, q_guard_reason = _q_guard(
+            q,
+            require_finite_env="CSAHCA_DSV4_REPLACE_REQUIRE_FINITE_Q",
+            require_finite_default="1",
+            max_abs_env="CSAHCA_DSV4_REPLACE_MAX_ABS_Q",
+            max_abs_default=1.0e6,
+        )
     if (
         decision.use_csahca
         and replace_output
         and replace_forward_mode_allowed
-        and q_finite_for_replace
+        and q_ok_for_replace
     ):
         if save_kv_cache:
             self_obj.store_cache(layer_id, k, forward_batch)
@@ -656,8 +873,14 @@ def _maybe_forward_csahca(
 
     live_compare = _enabled("CSAHCA_DSV4_LIVE_COMPARE", "1")
     compare_allowed = True
-    if decision.use_csahca and live_compare and _enabled("CSAHCA_DSV4_COMPARE_REQUIRE_FINITE_Q"):
-        compare_allowed = _tensor_all_finite(q)
+    if decision.use_csahca and live_compare:
+        compare_allowed, _ = _q_guard(
+            q,
+            require_finite_env="CSAHCA_DSV4_COMPARE_REQUIRE_FINITE_Q",
+            require_finite_default="0",
+            max_abs_env="CSAHCA_DSV4_COMPARE_MAX_ABS_Q",
+            max_abs_default=0.0,
+        )
     if decision.use_csahca and live_compare and compare_allowed and _compare_budget_available(
         layer_id=int(layer_id),
         forward_batch=forward_batch,
@@ -689,6 +912,26 @@ def _maybe_forward_csahca(
                 candidate=candidate,
                 q=q,
             )
+            if _capture_budget_available(
+                layer_id=int(layer_id),
+                compress_ratio=int(compress_ratio),
+                forward_batch=forward_batch,
+                q=q,
+            ):
+                _capture_live_compare(
+                    self_obj=self_obj,
+                    q=q,
+                    k=k,
+                    v=v,
+                    token_to_kv_pool=token_to_kv_pool,
+                    core=core,
+                    layer_id=int(layer_id),
+                    compress_ratio=int(compress_ratio),
+                    forward_batch=forward_batch,
+                    attn_sink=attn_sink,
+                    reference=reference,
+                    candidate=candidate,
+                )
         except Exception as exc:
             LOGGER.warning(
                 "[CSAHCA][DSV4] live compare failed layer=%s compress_ratio=%s: %r",
@@ -698,13 +941,13 @@ def _maybe_forward_csahca(
             )
 
     if decision.use_csahca:
-        if replace_output and replace_forward_mode_allowed and not q_finite_for_replace:
+        if replace_output and replace_forward_mode_allowed and not q_ok_for_replace:
             _log_delegate(
                 layer_id=int(layer_id),
                 compress_ratio=int(compress_ratio),
                 forward_batch=forward_batch,
                 q=q,
-                reason="non-finite q; finite-q guard kept FlashMLA output",
+                reason=f"{q_guard_reason}; q guard kept FlashMLA output",
             )
         return reference
 

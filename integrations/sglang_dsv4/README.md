@@ -1,37 +1,37 @@
 # SGLang DeepSeek-V4 Integration
 
-This folder contains an env-gated hook for testing CSAHCA inside SGLang's
-DeepSeek-V4/FlashMLA serving path.
+This folder contains an isolated, env-gated integration hook for testing CSAHCA
+inside the real SGLang DeepSeek-V4-Flash serving path.
 
-The hook patches `DeepseekV4AttnBackend.forward()` at process startup through
-`sitecustomize.py`. It can trace the real ABI, compare CSAHCA output against
-FlashMLA on live tensors, or replace FlashMLA output for decode-only smoke
-tests.
+The current CSAHCA CUDA kernel is not ABI-compatible with SGLang's production
+DeepSeek-V4 attention path yet. The production path calls
+`DeepseekV4AttnBackend.forward()` and then `flash_mla_with_kvcache()` with a
+packed FP8 SWA cache, optional C4/C128 compressed pages, page indices, top-k
+lengths, attention sinks, and FlashMLA scheduler metadata. The existing CSAHCA
+kernel expects regular BF16/FP16 `q, k_cache, v_cache, selected_chunks`.
 
-## Modes
+This integration therefore starts with a safe hook:
 
-| Variable | Meaning |
-| --- | --- |
-| `CSAHCA_DSV4_MODE=trace` | Log ABI/runtime information and delegate to FlashMLA. |
-| `CSAHCA_DSV4_MODE=csahca` | Run the CSAHCA DSV4 bridge when supported, otherwise delegate. |
-| `CSAHCA_DSV4_MODE=require-kernel` | Fail fast if the CSAHCA bridge cannot run. |
-| `CSAHCA_DSV4_LIVE_COMPARE=1` | Compare CSAHCA output with FlashMLA and log tolerance results. |
-| `CSAHCA_DSV4_REPLACE_OUTPUT=1` | Return CSAHCA output instead of FlashMLA output. Use only for controlled smoke tests. |
+- `CSAHCA_DSV4_MODE=trace`: enter the real DSV4 backend, log call shapes, and
+  delegate to the original FlashMLA implementation.
+- `CSAHCA_DSV4_MODE=csahca`: try the CSAHCA bridge and delegate if the current
+  kernel is not compatible.
+- `CSAHCA_DSV4_MODE=require-kernel`: fail fast unless a DSV4-compatible CSAHCA
+  kernel is available.
 
-Supported prototype cache modes:
+Useful proof knobs:
 
-- `compress_ratio=0`: SWA only.
-- `compress_ratio=4`: SWA + C4 sparse pages.
-- `compress_ratio=128`: SWA + C128 sparse pages.
+- `CSAHCA_DSV4_TRACE_ABI=1`: log DSV4 q/cache/index tensor shapes.
+- `CSAHCA_DSV4_NVTX=1`: add `CSAHCA_DSV4/...` NVTX ranges for Nsight Systems.
+- `CSAHCA_DSV4_REPLACE_REQUIRE_FINITE_Q=1`: keep FlashMLA output when `q`
+  contains NaN/Inf during replacement runs.
+- `CSAHCA_DSV4_REPLACE_MAX_ABS_Q=1000000`: keep FlashMLA output when `q`
+  has finite but suspiciously huge inactive-lane values.
 
 ## Smoke Test
 
-Set the SGLang source and Python environment if they are not in the defaults:
-
 ```bash
-export SGLANG_SRC="${HOME}/src/sglang-main"
-export PY="${HOME}/envs/dsv4_flash/bin/python"
-bash integrations/sglang_dsv4/scripts/smoke_import_hook.sh
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/smoke_import_hook.sh
 ```
 
 Expected output includes `"patched": true`.
@@ -44,70 +44,88 @@ them.
 ```bash
 PORT=30001 \
 CUDA_VISIBLE_DEVICES=1,2,3,4 \
-MODEL_PATH="${HOME}/checkpoints/DeepSeek-V4-Flash-HF" \
 CSAHCA_DSV4_MODE=trace \
-bash integrations/sglang_dsv4/scripts/launch_patched_dsv4.sh
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/launch_patched_dsv4.sh
 ```
 
-To restart a service on an existing port:
+Use `PORT=30000` only if the existing service has been stopped.
+
+To replace the service on a port in one command:
 
 ```bash
 CONFIRM_RESTART=1 PORT=30000 CSAHCA_DSV4_MODE=trace \
-bash integrations/sglang_dsv4/scripts/restart_patched_on_port.sh
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/restart_patched_on_port.sh
 ```
 
 Detached background variant:
 
 ```bash
 CONFIRM_RESTART=1 PORT=30000 CSAHCA_DSV4_MODE=trace \
-bash integrations/sglang_dsv4/scripts/restart_patched_detached.sh
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/restart_patched_detached.sh
 ```
 
-## Live Compare
-
-Use this before any replacement run:
-
-```bash
-CSAHCA_DSV4_MODE=csahca \
-CSAHCA_DSV4_LIVE_COMPARE=1 \
-CSAHCA_DSV4_REPLACE_OUTPUT=0 \
-CSAHCA_DSV4_COMPARE_FORWARD_MODES=DECODE \
-bash integrations/sglang_dsv4/scripts/launch_patched_dsv4.sh
-```
-
-Then send a small request and inspect log lines beginning with
-`[CSAHCA][DSV4] live_compare`.
-
-## Replacement Smoke
-
-Replacement is intentionally explicit:
-
-```bash
-CSAHCA_DSV4_MODE=csahca \
-CSAHCA_DSV4_REPLACE_OUTPUT=1 \
-CSAHCA_DSV4_REPLACE_FORWARD_MODES=DECODE \
-SGLANG_EXTRA_ARGS="--disable-decode-cuda-graph" \
-bash integrations/sglang_dsv4/scripts/launch_patched_dsv4.sh
-```
-
-This proves functional wiring only. It is not a production speedup benchmark.
-
-## Benchmark Helpers
+## Benchmark
 
 Lightweight HTTP smoke benchmark:
 
 ```bash
 PORT=30000 NUM_PROMPTS=4 CONCURRENCY=1 INPUT_WORDS=64 MAX_TOKENS=16 \
-bash integrations/sglang_dsv4/scripts/bench_http_chat.sh
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/bench_http_chat.sh
 ```
 
-SGLang's built-in serving benchmark:
+SGLang's built-in serving benchmark can also be used:
 
 ```bash
 PORT=30000 NUM_PROMPTS=16 RANDOM_INPUT_LEN=1024 RANDOM_OUTPUT_LEN=64 \
-bash integrations/sglang_dsv4/scripts/bench_openai_random.sh
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/bench_openai_random.sh
 ```
 
-For A/B testing, run the same workload against baseline and patched services
-and compare output throughput, TPOT, TTFT, request latency, and live-compare
-correctness logs.
+For A/B testing, run the same command against the baseline port and the patched
+port, then compare output throughput, TPOT, TTFT, and request latency.
+
+
+## Closure Workflow
+
+Run shadow compare without replacing model outputs:
+
+```bash
+PORT=30001 CUDA_VISIBLE_DEVICES=1,2,3,4 \
+CSAHCA_DSV4_COMPARE_LAYER_IDS=all \
+CSAHCA_DSV4_COMPARE_MAX_Q=8 \
+CSAHCA_DSV4_COMPARE_MAX_CALLS=512 \
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/run_shadow_compare.sh
+```
+
+Shadow compare intentionally keeps `CSAHCA_DSV4_COMPARE_REQUIRE_FINITE_Q=0`
+and `CSAHCA_DSV4_COMPARE_MAX_ABS_Q=0` by default. This preserves evidence for
+SGLang/FlashMLA native NaN or inactive-head lanes while still returning the
+native output to clients. Replacement runs are stricter: by default they only
+return CSAHCA output when `q` is finite and its absolute maximum is below
+`CSAHCA_DSV4_REPLACE_MAX_ABS_Q`.
+
+Optionally capture a small number of replayable calls. Captures include the
+selected indices, attention sink, FlashMLA reference output, CSAHCA candidate
+output, and packed cache tensors by default:
+
+```bash
+CSAHCA_DSV4_CAPTURE_DIR=/mnt/Data/yangpd/CSAHCA/results/dsv4_captures \
+CSAHCA_DSV4_CAPTURE_LAYER_IDS=0,2,3 \
+CSAHCA_DSV4_CAPTURE_MAX_Q=4 \
+CSAHCA_DSV4_CAPTURE_MAX_CALLS=12 \
+bash /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/run_shadow_compare.sh
+```
+
+Summarize live-compare logs:
+
+```bash
+python3 /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/summarize_live_compare.py \
+  /mnt/Data/yangpd/logs/dsv4_flash/csahca_shadow_compare_*.log
+```
+
+Replay captured tensors offline:
+
+```bash
+/mnt/Data/yangpd/envs/dsv4_flash/bin/python \
+  /mnt/Data/yangpd/CSAHCA/integrations/sglang_dsv4/scripts/replay_capture.py \
+  /mnt/Data/yangpd/CSAHCA/results/dsv4_captures/*.pt
+```
