@@ -11,6 +11,7 @@ NUM_PROMPTS="${NUM_PROMPTS:-4}"
 CONCURRENCY="${CONCURRENCY:-1}"
 INPUT_WORDS="${INPUT_WORDS:-64}"
 MAX_TOKENS="${MAX_TOKENS:-16}"
+PROMPT_TAG="${PROMPT_TAG:-${BENCH_PROMPT_TAG:-}}"
 IGNORE_EOS="${IGNORE_EOS:-1}"
 OUT="${OUT:-${PROJECT_ROOT}/results/http_chat_${PORT}_${INPUT_WORDS}_${MAX_TOKENS}.json}"
 
@@ -29,5 +30,6 @@ mkdir -p "$(dirname "${OUT}")"
   --concurrency "${CONCURRENCY}" \
   --input-words "${INPUT_WORDS}" \
   --max-tokens "${MAX_TOKENS}" \
+  --prompt-tag "${PROMPT_TAG}" \
   "${ignore_eos_arg}" \
   --out "${OUT}"

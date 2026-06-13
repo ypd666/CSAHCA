@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--input-words", type=int, default=64)
     parser.add_argument("--max-tokens", type=int, default=16)
+    parser.add_argument("--prompt-tag", default=os.environ.get("BENCH_PROMPT_TAG", ""))
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--ignore-eos", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--timeout", type=float, default=600.0)
@@ -30,17 +31,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def make_prompt(input_words: int, request_id: int) -> str:
+def make_prompt(input_words: int, request_id: int, prompt_tag: str = "") -> str:
     words = ["profile", "attention", "kernel", "latency", "throughput", "cache", "decode", "token"]
     body = " ".join(words[i % len(words)] for i in range(max(1, input_words)))
-    return f"Request {request_id}. {body}\nReply with one concise sentence."
+    tag = f" Tag {prompt_tag}." if prompt_tag else ""
+    return f"Request {request_id}.{tag} {body}\nReply with one concise sentence."
 
 
 def send_one(args: argparse.Namespace, request_id: int) -> dict[str, Any]:
     url = f"http://{args.host}:{args.port}/v1/chat/completions"
     payload = {
         "model": args.model,
-        "messages": [{"role": "user", "content": make_prompt(args.input_words, request_id)}],
+        "messages": [{"role": "user", "content": make_prompt(args.input_words, request_id, args.prompt_tag)}],
         "max_tokens": args.max_tokens,
         "temperature": args.temperature,
         "ignore_eos": args.ignore_eos,
@@ -97,6 +99,7 @@ def main() -> None:
         "concurrency": args.concurrency,
         "input_words": args.input_words,
         "max_tokens": args.max_tokens,
+        "prompt_tag": args.prompt_tag,
         "ignore_eos": args.ignore_eos,
         "completed": len(rows),
         "duration_s": duration_s,

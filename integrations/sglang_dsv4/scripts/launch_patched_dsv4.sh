@@ -33,7 +33,15 @@ fi
 export PATH="$(dirname "${PY}"):${CUDA_HOME}/bin:${GCC12_HOME}/bin:${PATH:-}"
 export PYTHONPATH="${PATCH_ROOT}:${PROJECT_ROOT}:${SGLANG_SRC}/python:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${GCC12_HOME}/lib:${SITE_PACKAGES}/nvidia/cu13/lib:${SITE_PACKAGES}/nvidia/cu13/lib64:${SITE_PACKAGES}/torch/lib:${SITE_PACKAGES}/tvm_ffi/lib:${LD_LIBRARY_PATH:-}"
-export CSAHCA_SGLANG_DSV4_PATCH="${CSAHCA_SGLANG_DSV4_PATCH:-1}"
+case "${CSAHCA_DSV4_NATIVE:-0}" in
+  ""|0|false|False|FALSE|no|No|NO|off|Off|OFF)
+    default_hook_patch=1
+    ;;
+  *)
+    default_hook_patch=0
+    ;;
+esac
+export CSAHCA_SGLANG_DSV4_PATCH="${CSAHCA_SGLANG_DSV4_PATCH:-${default_hook_patch}}"
 export CSAHCA_DSV4_MODE="${CSAHCA_DSV4_MODE:-trace}"
 export CSAHCA_DSV4_TRACE_FIRST_N="${CSAHCA_DSV4_TRACE_FIRST_N:-16}"
 export CSAHCA_DSV4_TRACE_ABI="${CSAHCA_DSV4_TRACE_ABI:-1}"
@@ -56,6 +64,7 @@ mkdir -p "$(dirname "${LOG_FILE}")"
 echo "Launching patched DeepSeek-V4 SGLang service" | tee "${LOG_FILE}"
 echo "  port=${PORT} cuda=${CUDA_VISIBLE_DEVICES} mode=${CSAHCA_DSV4_MODE}" | tee -a "${LOG_FILE}"
 echo "  patch_root=${PATCH_ROOT}" | tee -a "${LOG_FILE}"
+echo "  native=${CSAHCA_DSV4_NATIVE:-0} hook_patch=${CSAHCA_SGLANG_DSV4_PATCH}" | tee -a "${LOG_FILE}"
 echo "  extra_args=${SGLANG_EXTRA_ARGS}" | tee -a "${LOG_FILE}"
 
 read -r -a EXTRA_ARGS <<< "${SGLANG_EXTRA_ARGS}"

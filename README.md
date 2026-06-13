@@ -36,8 +36,9 @@ replacement.
   tensor comparison against SGLang FlashMLA on H100, including C4 and C128
   paths, but it is not optimized enough to claim end-to-end serving speedup.
 - The SGLang integration is behind environment flags and is designed for A/B
-  testing, live comparison, and smoke replacement. Production use would require
-  a deeper C++/CUDA integration and decode CUDA graph compatibility.
+  testing, live comparison, smoke replacement, and an experimental native
+  decode CUDA graph path. Production use would require further kernel
+  optimization and upstream-quality SGLang integration.
 
 No model weights, datasets, profiler reports, or generated benchmark artifacts
 are included in the repository.
@@ -63,17 +64,21 @@ full command, CSV paths, and interpretation.
 Workload: H100x4, `32` requests, concurrency `8`, generated prompt length
 about `1024` words, `max_tokens=64`, OpenAI-compatible chat endpoint.
 
-| Decode CUDA graph | FlashMLA baseline | CSAHCA guarded replacement | Result |
+| Decode CUDA graph | FlashMLA baseline | CSAHCA path | Result |
 | --- | ---: | ---: | ---: |
 | Disabled | 22.65 output tok/s | 26.59 output tok/s | 1.17x faster |
-| Enabled | 57.06 output tok/s | 57.54 output tok/s | essentially parity |
+| Enabled, guarded hook replacement | 57.06 output tok/s | 57.54 output tok/s | essentially parity |
+| Enabled, native CSAHCA branch, clean-tag full-output run | 290.02 output tok/s | 132.22 output tok/s | 0.46x baseline |
 
 The graph-disabled row measures the replacement path without decode CUDA graph
-capture. The graph-enabled row is closer to the normal SGLang serving mode; in
-that mode CUDA graph capture dominates this workload and the CSAHCA guarded
-replacement no longer shows a meaningful serving-level speedup. The DSV4 path
-therefore remains a correctness and integration prototype rather than a
-production FlashMLA replacement.
+capture. The guarded-hook graph-enabled row is closer to normal SGLang serving
+mode, but it does not prove that CSAHCA itself was captured because the hook can
+delegate during CUDA stream capture. The native row patches SGLang's
+`DeepseekV4AttnBackend.forward()` so the CSAHCA DSV4 op is selected before the
+FlashMLA call and is captured by SGLang's decode CUDA graph. That row is the
+current apples-to-apples graph-mode result for the same prompt tag and full
+`max_tokens=64` outputs. It shows that the integration works, but the current
+DSV4 CSAHCA kernel is still much slower than FlashMLA in graph-mode serving.
 
 ## Repository Layout
 
@@ -152,8 +157,9 @@ The current DSV4 implementation details and caveats are in
 
 ## SGLang Integration
 
-The SGLang hook lives in [integrations/sglang_dsv4](integrations/sglang_dsv4).
-It is disabled by default and is controlled by environment variables:
+The SGLang hook and native-branch helpers live in
+[integrations/sglang_dsv4](integrations/sglang_dsv4). They are disabled by
+default and are controlled by environment variables:
 
 ```bash
 export CSAHCA_SGLANG_DSV4_PATCH=1
