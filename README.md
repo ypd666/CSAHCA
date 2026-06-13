@@ -42,6 +42,39 @@ replacement.
 No model weights, datasets, profiler reports, or generated benchmark artifacts
 are included in the repository.
 
+## Current H100 Benchmark Snapshot
+
+### One-GPU Model-Level Kernel A/B
+
+Shape: `batch=1, heads=8, head_dim=128, seq_len=32768, chunk_size=64,
+top_k=8, dtype=bfloat16`.
+
+| Workload | Baseline | CSAHCA kernel path | Result |
+| --- | ---: | ---: | ---: |
+| Decode block, MLP ratio 2.0 | torch-csa 0.3311 ms/token | cuda-csa-tiled 0.1221 ms/token | 2.71x faster |
+| Attention-dominated, MLP ratio 0.0 | torch-csa 0.2807 ms/token | cuda-csa-tiled 0.0742 ms/token | 3.78x faster |
+| Dynamic chunk selection | torch-csa 0.3858 ms/token | cuda-csa-tiled 0.3001 ms/token | 1.29x faster |
+
+See [docs/model_kernel_benchmark.md](docs/model_kernel_benchmark.md) for the
+full command, CSV paths, and interpretation.
+
+### SGLang DeepSeek-V4 Serving A/B
+
+Workload: H100x4, `32` requests, concurrency `8`, generated prompt length
+about `1024` words, `max_tokens=64`, OpenAI-compatible chat endpoint.
+
+| Decode CUDA graph | FlashMLA baseline | CSAHCA guarded replacement | Result |
+| --- | ---: | ---: | ---: |
+| Disabled | 22.65 output tok/s | 26.59 output tok/s | 1.17x faster |
+| Enabled | 57.06 output tok/s | 57.54 output tok/s | essentially parity |
+
+The graph-disabled row measures the replacement path without decode CUDA graph
+capture. The graph-enabled row is closer to the normal SGLang serving mode; in
+that mode CUDA graph capture dominates this workload and the CSAHCA guarded
+replacement no longer shows a meaningful serving-level speedup. The DSV4 path
+therefore remains a correctness and integration prototype rather than a
+production FlashMLA replacement.
+
 ## Repository Layout
 
 ```text
